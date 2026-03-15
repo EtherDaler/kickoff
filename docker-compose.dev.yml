@@ -1,0 +1,43 @@
+#!/bin/bash
+# dev-compose.dev.yml override — для локальной разработки
+# Бэкенд с hot-reload, фронт запускается отдельно через npm run dev
+
+# Использование:
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml up postgres backend bot --build
+
+version: "3.9"
+
+services:
+  backend:
+    volumes:
+      - ./backend/app:/app/app           # hot-reload кода
+      - ./backend/migrations:/app/migrations
+      - uploads_data:/app/uploads
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+    ports:
+      - "8000:8000"                       # открываем наружу для npm run dev
+    # Переопределяем entrypoint для dev — добавляем --reload
+    entrypoint: >
+      sh -c "
+        echo 'Waiting for postgres...' &&
+        while ! nc -z postgres 5432; do sleep 1; done &&
+        echo 'Running migrations...' &&
+        if [ -z \"\$(ls -A migrations/versions/*.py 2>/dev/null)\" ]; then
+          alembic revision --autogenerate -m initial;
+        fi &&
+        alembic upgrade head &&
+        echo 'Starting backend with hot-reload...' &&
+        exec uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+      "
+
+  postgres:
+    ports:
+      - "5432:5432"
+
+  # В dev фронт и nginx не нужны — фронт запускается через npm run dev
+  frontend:
+    profiles: ["production"]
+
+  nginx:
+    profiles: ["production"]
