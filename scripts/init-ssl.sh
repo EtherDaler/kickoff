@@ -20,11 +20,33 @@ if ! command -v certbot &> /dev/null; then
     apt-get install -y certbot
 fi
 
-# Убеждаемся что порт 80 свободен (останавливаем Docker если запущен)
-echo "⏹  Stopping any running containers on port 80..."
-docker compose down 2>/dev/null || true
+echo "⏹  Freeing port 80..."
 
-# Получаем сертификат (standalone — certbot сам поднимет временный веб-сервер)
+# Останавливаем все Docker-контейнеры
+docker compose down 2>/dev/null || true
+docker stop $(docker ps -q) 2>/dev/null || true
+
+# Останавливаем системный nginx/apache если есть
+systemctl stop nginx 2>/dev/null || true
+systemctl stop apache2 2>/dev/null || true
+
+# Убиваем любой процесс на порту 80
+fuser -k 80/tcp 2>/dev/null || true
+
+# Ждём секунду чтобы порт освободился
+sleep 2
+
+# Проверяем что порт 80 свободен
+if ss -tlnp | grep -q ':80 '; then
+    echo "❌ Port 80 is still in use!"
+    ss -tlnp | grep ':80'
+    echo "Kill the process manually and re-run the script."
+    exit 1
+fi
+
+echo "✅ Port 80 is free"
+
+# Получаем сертификат
 echo "🔐 Requesting SSL certificate for $DOMAIN..."
 certbot certonly \
     --standalone \
@@ -35,14 +57,15 @@ certbot certonly \
 
 echo ""
 echo "✅ Certificate obtained!"
-echo "   Location: /etc/letsencrypt/live/$DOMAIN/"
+echo "   Cert: /etc/letsencrypt/live/$DOMAIN/fullchain.pem"
+echo "   Key:  /etc/letsencrypt/live/$DOMAIN/privkey.pem"
 echo ""
 
 # Настраиваем автообновление через cron
 if ! crontab -l 2>/dev/null | grep -q "certbot renew"; then
-    echo "⏰ Setting up auto-renewal cron job..."
-    (crontab -l 2>/dev/null; echo "0 3 * * * certbot renew --quiet && docker compose -f $(pwd)/docker-compose.yml restart nginx") | crontab -
-    echo "✅ Cron job added (runs daily at 3:00 AM)"
+    COMPOSE_DIR=$(pwd)
+    (crontab -l 2>/dev/null; echo "0 3 * * * certbot renew --quiet && docker compose -f $COMPOSE_DIR/docker-compose.yml restart nginx") | crontab -
+    echo "✅ Auto-renewal cron job added (daily at 3:00 AM)"
 fi
 
 echo ""
