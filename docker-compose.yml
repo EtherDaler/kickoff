@@ -28,6 +28,7 @@ services:
       DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
     volumes:
       - uploads_data:/app/uploads
+      - migrations_data:/app/migrations/versions
     expose:
       - "8000"
     depends_on:
@@ -78,3 +79,4 @@ volumes:
   postgres_data:
   uploads_data:
   certbot_www:
+  migrations_data:
