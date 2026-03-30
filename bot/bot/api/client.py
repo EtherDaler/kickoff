@@ -175,6 +175,30 @@ class APIClient:
                     return await resp.json()
                 return None
 
+    async def repeat_match(self, telegram_id: int, match_id: int, match_date: str) -> dict | None:
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                f"{self.base_url}/matches/{match_id}/repeat",
+                json={"match_date": match_date},
+                headers=self._bot_auth_header(telegram_id),
+            ) as resp:
+                if resp.status == 200:
+                    return await resp.json()
+                text = await resp.text()
+                return {"error": text}
+
+    async def update_match(self, telegram_id: int, match_id: int, data: dict) -> dict | None:
+        async with aiohttp.ClientSession() as session:
+            async with session.patch(
+                f"{self.base_url}/matches/{match_id}",
+                json=data,
+                headers=self._bot_auth_header(telegram_id),
+            ) as resp:
+                if resp.status == 200:
+                    return await resp.json()
+                text = await resp.text()
+                return {"error": text}
+
     def _bot_auth_header(self, telegram_id: int) -> dict:
         """Generate a special bot auth header that bypasses init data validation."""
         return {"X-Bot-Auth": str(telegram_id)}

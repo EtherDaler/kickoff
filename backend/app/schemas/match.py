@@ -5,6 +5,10 @@ from app.models.match_participant import ParticipantRole, ParticipantStatus
 from app.schemas.user import UserShort
 
 
+class MatchRepeat(BaseModel):
+    match_date: datetime
+
+
 class MatchCreate(BaseModel):
     title: str = Field(..., min_length=3, max_length=128)
     address: str = Field(..., min_length=3, max_length=256)

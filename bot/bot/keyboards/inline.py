@@ -46,19 +46,51 @@ def roles_keyboard(current_roles: list[str]) -> InlineKeyboardMarkup:
     return builder.as_markup()
 
 
-def match_actions(match_id: int, is_organizer: bool, is_participant: bool, is_paid: bool) -> InlineKeyboardMarkup:
+def match_actions(
+    match_id: int,
+    is_organizer: bool,
+    is_participant: bool,
+    is_paid: bool,
+    status: str = "upcoming",
+) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
-    if not is_participant and not is_organizer:
-        builder.add(InlineKeyboardButton(text="✅ Присоединиться", callback_data=f"join_match:{match_id}"))
-        builder.add(InlineKeyboardButton(text="🟡 Как судья", callback_data=f"join_referee:{match_id}"))
-    if is_participant and not is_organizer:
-        if is_paid:
-            builder.add(InlineKeyboardButton(text="📸 Загрузить чек", callback_data=f"upload_receipt:{match_id}"))
-        builder.add(InlineKeyboardButton(text="❌ Отменить участие", callback_data=f"leave_match:{match_id}"))
-    if is_organizer:
-        builder.add(InlineKeyboardButton(text="📊 Добавить статистику", callback_data=f"add_stats:{match_id}"))
-        builder.add(InlineKeyboardButton(text="🧾 Чеки игроков", callback_data=f"view_receipts:{match_id}"))
+    is_finished = status in ("finished", "cancelled")
+
+    if is_finished:
+        builder.add(InlineKeyboardButton(text="🔁 Повторить матч", callback_data=f"repeat_match:{match_id}"))
+    else:
+        if not is_participant and not is_organizer:
+            builder.add(InlineKeyboardButton(text="✅ Присоединиться", callback_data=f"join_match:{match_id}"))
+            builder.add(InlineKeyboardButton(text="🟡 Как судья", callback_data=f"join_referee:{match_id}"))
+        if is_participant and not is_organizer:
+            if is_paid:
+                builder.add(InlineKeyboardButton(text="📸 Загрузить чек", callback_data=f"upload_receipt:{match_id}"))
+            builder.add(InlineKeyboardButton(text="❌ Отменить участие", callback_data=f"leave_match:{match_id}"))
+        if is_organizer:
+            builder.add(InlineKeyboardButton(text="✏️ Редактировать матч", callback_data=f"edit_match:{match_id}"))
+            builder.add(InlineKeyboardButton(text="📊 Добавить статистику", callback_data=f"add_stats:{match_id}"))
+            builder.add(InlineKeyboardButton(text="🧾 Чеки игроков", callback_data=f"view_receipts:{match_id}"))
     builder.adjust(1)
+    return builder.as_markup()
+
+
+def match_edit_menu(match_id: int) -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    fields = [
+        ("title", "✏️ Название"),
+        ("address", "📍 Адрес"),
+        ("match_date", "📅 Дата и время"),
+        ("max_players", "👥 Макс. игроков"),
+        ("price_per_player", "💰 Цена за игрока"),
+        ("description", "📝 Описание"),
+    ]
+    for field, label in fields:
+        builder.add(InlineKeyboardButton(
+            text=label,
+            callback_data=f"edit_field:{match_id}:{field}",
+        ))
+    builder.add(InlineKeyboardButton(text="❌ Отмена", callback_data=f"match_info:{match_id}"))
+    builder.adjust(2, 2, 2, 1)
     return builder.as_markup()
 
 

@@ -6,7 +6,7 @@ def main_menu() -> ReplyKeyboardMarkup:
         keyboard=[
             [KeyboardButton(text="👤 Мой профиль"), KeyboardButton(text="⚽ Матчи")],
             [KeyboardButton(text="👥 Друзья"), KeyboardButton(text="🔍 Найти матч")],
-            [KeyboardButton(text="📋 Мои матчи")],
+            [KeyboardButton(text="📋 Мои матчи"), KeyboardButton(text="📜 История")],
         ],
         resize_keyboard=True,
         one_time_keyboard=False,

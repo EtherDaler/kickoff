@@ -20,3 +20,11 @@ class FriendSearch(StatesGroup):
 
 class ReceiptUpload(StatesGroup):
     waiting_photo = State()
+
+
+class MatchRepeat(StatesGroup):
+    waiting_date = State()
+
+
+class MatchEdit(StatesGroup):
+    waiting_value = State()

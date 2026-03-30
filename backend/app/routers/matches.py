@@ -8,11 +8,13 @@ from app.models.match_participant import MatchParticipant, ParticipantRole, Part
 from app.models.match_stats import MatchStats, PlayerMatchStat
 from app.models.payment import PaymentReceipt, PaymentStatus
 from app.models.user import User
-from app.schemas.match import MatchCreate, MatchUpdate, MatchOut, MatchShort, MatchStatsCreate, MatchStatsOut, ParticipantOut
+from app.schemas.match import MatchCreate, MatchUpdate, MatchOut, MatchShort, MatchStatsCreate, MatchStatsOut, ParticipantOut, MatchRepeat
 from app.schemas.payment import PaymentReceiptOut, PaymentStatusUpdate
 from app.schemas.user import UserShort
 from app.services.file_upload import save_upload
+from app.services.telegram_notify import notify_users
 from app.routers.users import get_current_user
+from app.config import get_settings
 
 router = APIRouter(prefix="/matches", tags=["matches"])
 
@@ -212,10 +214,53 @@ async def update_match(
     if match.organizer_id != current_user.id:
         raise HTTPException(403, "Only organizer can update")
 
-    for field, value in data.model_dump(exclude_none=True).items():
+    field_labels = {
+        "title": "Название",
+        "address": "Адрес",
+        "match_date": "Дата и время",
+        "max_players": "Макс. игроков",
+        "price_per_player": "Цена за игрока",
+        "description": "Описание",
+        "visibility": "Видимость",
+        "status": "Статус",
+        "is_paid": "Платный матч",
+    }
+
+    changes = data.model_dump(exclude_none=True)
+    changed_lines = []
+    for field, value in changes.items():
+        old_val = getattr(match, field)
+        if old_val != value:
+            label = field_labels.get(field, field)
+            if field == "match_date":
+                old_str = old_val.strftime("%d.%m.%Y %H:%M") if hasattr(old_val, "strftime") else str(old_val)[:16]
+                new_str = value.strftime("%d.%m.%Y %H:%M") if hasattr(value, "strftime") else str(value)[:16]
+                changed_lines.append(f"• {label}: {old_str} → {new_str}")
+            else:
+                changed_lines.append(f"• {label}: {old_val} → {value}")
         setattr(match, field, value)
+
     await db.flush()
     match = await load_match(match_id, db)
+
+    if changed_lines:
+        participant_tg_ids = [
+            p.user.telegram_id
+            for p in match.participants
+            if p.user_id != current_user.id
+            and p.status not in (ParticipantStatus.CANCELLED, ParticipantStatus.REJECTED)
+        ]
+        if participant_tg_ids:
+            changes_text = "\n".join(changed_lines)
+            notify_text = (
+                f"✏️ <b>Матч «{match.title}» был изменён</b>\n\n"
+                f"{changes_text}\n\n"
+                f"📍 {match.address}\n"
+                f"📅 {match.match_date.strftime('%d.%m.%Y %H:%M')}"
+            )
+            settings = get_settings()
+            await notify_users(settings.bot_token, participant_tg_ids, notify_text)
+
     return build_match_out(match)
 
 
@@ -274,7 +319,73 @@ async def leave_match(
     participant.status = ParticipantStatus.CANCELLED
     await db.flush()
     match = await load_match(match_id, db)
+
+    leaving_name = f"@{current_user.username}" if current_user.username else current_user.first_name
+    notify_tg_ids = [
+        p.user.telegram_id
+        for p in match.participants
+        if p.user_id != current_user.id
+        and p.status not in (ParticipantStatus.CANCELLED, ParticipantStatus.REJECTED)
+    ]
+    if match.organizer.telegram_id not in notify_tg_ids:
+        notify_tg_ids.append(match.organizer.telegram_id)
+    notify_tg_ids = [tid for tid in notify_tg_ids if tid != current_user.telegram_id]
+
+    if notify_tg_ids:
+        confirmed = sum(1 for p in match.participants if p.status == ParticipantStatus.CONFIRMED)
+        notify_text = (
+            f"❌ <b>{leaving_name}</b> отменил(а) участие в матче «{match.title}»\n\n"
+            f"📍 {match.address}\n"
+            f"📅 {match.match_date.strftime('%d.%m.%Y %H:%M')}\n"
+            f"👥 Подтверждено: {confirmed}/{match.max_players}"
+        )
+        settings = get_settings()
+        await notify_users(settings.bot_token, notify_tg_ids, notify_text)
+
     return build_match_out(match)
+
+
+@router.post("/{match_id}/repeat", response_model=MatchOut)
+async def repeat_match(
+    match_id: int,
+    data: MatchRepeat,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    original = await load_match(match_id, db)
+    if original.visibility == MatchVisibility.PRIVATE and original.organizer_id != current_user.id:
+        is_participant = any(p.user_id == current_user.id for p in original.participants)
+        if not is_participant:
+            raise HTTPException(403, "Access denied to this match")
+
+    new_match = Match(
+        organizer_id=current_user.id,
+        title=original.title,
+        address=original.address,
+        latitude=original.latitude,
+        longitude=original.longitude,
+        match_date=data.match_date,
+        max_players=original.max_players,
+        price_per_player=original.price_per_player,
+        description=original.description,
+        visibility=original.visibility,
+        is_paid=original.is_paid,
+        requires_referee=original.requires_referee,
+    )
+    db.add(new_match)
+    await db.flush()
+
+    organizer_participant = MatchParticipant(
+        match_id=new_match.id,
+        user_id=current_user.id,
+        role=ParticipantRole.PLAYER,
+        status=ParticipantStatus.CONFIRMED,
+        payment_confirmed=True,
+    )
+    db.add(organizer_participant)
+    await db.flush()
+    new_match = await load_match(new_match.id, db)
+    return build_match_out(new_match)
 
 
 @router.post("/{match_id}/invite/{user_id}", response_model=MatchOut)
