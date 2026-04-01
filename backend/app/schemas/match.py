@@ -1,12 +1,24 @@
 from datetime import datetime
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from app.models.match import MatchStatus, MatchVisibility
 from app.models.match_participant import ParticipantRole, ParticipantStatus
 from app.schemas.user import UserShort
 
 
+def _strip_tz(v: datetime | None) -> datetime | None:
+    """Remove timezone info so the value is compatible with TIMESTAMP WITHOUT TIME ZONE."""
+    if isinstance(v, datetime) and v.tzinfo is not None:
+        return v.replace(tzinfo=None)
+    return v
+
+
 class MatchRepeat(BaseModel):
     match_date: datetime
+
+    @field_validator("match_date", mode="after")
+    @classmethod
+    def naive_match_date(cls, v: datetime) -> datetime:
+        return _strip_tz(v)
 
 
 class MatchCreate(BaseModel):
@@ -23,6 +35,11 @@ class MatchCreate(BaseModel):
     requires_referee: bool = False
     invited_user_ids: list[int] = []
 
+    @field_validator("match_date", mode="after")
+    @classmethod
+    def naive_match_date(cls, v: datetime) -> datetime:
+        return _strip_tz(v)
+
 
 class MatchUpdate(BaseModel):
     title: str | None = None
@@ -34,6 +51,11 @@ class MatchUpdate(BaseModel):
     visibility: MatchVisibility | None = None
     status: MatchStatus | None = None
     is_paid: bool | None = None
+
+    @field_validator("match_date", mode="after")
+    @classmethod
+    def naive_match_date(cls, v: datetime | None) -> datetime | None:
+        return _strip_tz(v)
 
 
 class ParticipantOut(BaseModel):
