@@ -94,15 +94,24 @@
 
           <template v-if="isOrganizer">
             <button
-              v-if="match.status === 'finished'"
+              v-if="match.status === 'upcoming'"
               class="btn btn-primary btn-full"
+              @click="$router.push(`/matches/${match.id}/edit`)"
+            >
+              ✏️ Редактировать матч
+            </button>
+            <button
+              v-if="match.status === 'finished'"
+              class="btn btn-secondary btn-full"
+              style="margin-top: 8px;"
               @click="$router.push(`/matches/${match.id}/stats`)"
             >
               📊 Заполнить статистику
             </button>
             <button
               v-else-if="match.status === 'upcoming'"
-              class="btn btn-secondary btn-full"
+              class="btn btn-outline btn-full"
+              style="margin-top: 8px;"
               @click="$router.push(`/matches/${match.id}/stats`)"
             >
               📊 Управление матчем

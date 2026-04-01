@@ -51,6 +51,7 @@ class MatchUpdate(BaseModel):
     visibility: MatchVisibility | None = None
     status: MatchStatus | None = None
     is_paid: bool | None = None
+    requires_referee: bool | None = None
 
     @field_validator("match_date", mode="after")
     @classmethod
