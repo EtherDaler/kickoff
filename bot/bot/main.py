@@ -8,6 +8,7 @@ from bot.config import get_settings
 from bot.api.client import APIClient
 from bot.middlewares.api_client import APIClientMiddleware
 from bot.handlers import start, profile, matches, friends
+from bot.proxy_session import create_proxy_session
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 logger = logging.getLogger(__name__)
@@ -18,6 +19,7 @@ async def main():
 
     bot = Bot(
         token=settings.bot_token,
+        session=create_proxy_session(),
         default=DefaultBotProperties(parse_mode=ParseMode.HTML),
     )
     storage = MemoryStorage()
