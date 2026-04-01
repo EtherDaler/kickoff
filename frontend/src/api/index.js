@@ -43,9 +43,11 @@ export const usersApi = {
   sendFriendRequest: (receiverTgId) =>
     api.post('/users/friends/request', { receiver_telegram_id: receiverTgId }),
   getFriendRequests: () => api.get('/users/friends/requests'),
+  getSentRequests: () => api.get('/users/friends/sent'),
   getFriends: () => api.get('/users/friends/list'),
   acceptFriendRequest: (id) => api.post(`/users/friends/requests/${id}/accept`),
   declineFriendRequest: (id) => api.post(`/users/friends/requests/${id}/decline`),
+  cancelFriendRequest: (id) => api.delete(`/users/friends/requests/${id}`),
 }
 
 export const matchesApi = {

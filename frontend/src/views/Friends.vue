@@ -52,21 +52,25 @@
       <!-- Tabs -->
       <div class="tabs" style="margin-bottom: 14px;">
         <button :class="['tab-btn', { active: activeTab === 'requests' }]" @click="activeTab = 'requests'">
-          📨 Запросы
+          📨 Входящие
           <span v-if="pendingCount" class="tab-badge">{{ pendingCount }}</span>
+        </button>
+        <button :class="['tab-btn', { active: activeTab === 'sent' }]" @click="activeTab = 'sent'">
+          📤 Отправленные
+          <span v-if="sentRequests.length" class="tab-badge tab-badge-gray">{{ sentRequests.length }}</span>
         </button>
         <button :class="['tab-btn', { active: activeTab === 'friends' }]" @click="activeTab = 'friends'">
           👥 Друзья
         </button>
       </div>
 
-      <!-- Friend Requests -->
+      <!-- Incoming Requests -->
       <div v-if="activeTab === 'requests'">
         <div v-if="requestsLoading" class="loading-center"><div class="spinner"></div></div>
         <div v-else-if="!friendRequests.length" class="empty-state">
           <span class="icon">📨</span>
-          <h3>Нет запросов</h3>
-          <p>Входящих запросов в друзья нет</p>
+          <h3>Нет входящих запросов</h3>
+          <p>Когда кто-то добавит тебя в друзья — запрос появится здесь</p>
         </div>
         <div v-else v-for="req in friendRequests" :key="req.id" class="user-card card">
           <div class="card-body">
@@ -80,9 +84,37 @@
                 </div>
               </div>
               <div class="request-actions">
-                <button class="btn btn-primary btn-sm" @click="accept(req.id)">✅</button>
+                <button class="btn btn-primary btn-sm" @click="accept(req.id)">✅ Принять</button>
                 <button class="btn btn-danger btn-sm" @click="decline(req.id)">❌</button>
               </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Sent Requests -->
+      <div v-if="activeTab === 'sent'">
+        <div v-if="sentLoading" class="loading-center"><div class="spinner"></div></div>
+        <div v-else-if="!sentRequests.length" class="empty-state">
+          <span class="icon">📤</span>
+          <h3>Нет отправленных запросов</h3>
+          <p>Найди пользователей через поиск и отправь запрос</p>
+        </div>
+        <div v-else v-for="req in sentRequests" :key="req.id" class="user-card card">
+          <div class="card-body">
+            <div class="user-card-row">
+              <div class="user-info-left">
+                <img v-if="req.receiver.avatar_url" :src="req.receiver.avatar_url" class="avatar" width="44" height="44" />
+                <div v-else class="avatar-placeholder" style="width:44px;height:44px;font-size:18px;">{{ req.receiver.first_name[0] }}</div>
+                <div>
+                  <p class="user-name">{{ req.receiver.first_name }} {{ req.receiver.last_name || '' }}</p>
+                  <p v-if="req.receiver.username" class="user-username">@{{ req.receiver.username }}</p>
+                  <p class="sent-hint">⏳ Ожидает ответа</p>
+                </div>
+              </div>
+              <button class="btn btn-outline btn-sm" @click="cancel(req.id, req.receiver.telegram_id)">
+                Отменить
+              </button>
             </div>
           </div>
         </div>
@@ -132,8 +164,10 @@ const roleNames = {
 
 const activeTab = ref('requests')
 const friendRequests = ref([])
+const sentRequests = ref([])
 const friends = ref([])
 const requestsLoading = ref(false)
+const sentLoading = ref(false)
 const friendsLoading = ref(false)
 const searchQ = ref('')
 const searchResults = ref([])
@@ -162,6 +196,8 @@ async function sendRequest(user) {
   try {
     await usersApi.sendFriendRequest(user.telegram_id)
     sentIds.value.add(user.telegram_id)
+    // Refresh sent requests so the new one appears in the tab
+    await loadSentRequests()
   } catch { }
 }
 
@@ -176,12 +212,30 @@ async function decline(id) {
   friendRequests.value = friendRequests.value.filter(r => r.id !== id)
 }
 
+async function cancel(id, receiverTgId) {
+  try {
+    await usersApi.cancelFriendRequest(id)
+    sentRequests.value = sentRequests.value.filter(r => r.id !== id)
+    sentIds.value.delete(receiverTgId)
+  } catch { }
+}
+
 async function loadRequests() {
   requestsLoading.value = true
   try {
     const res = await usersApi.getFriendRequests()
     friendRequests.value = res.data
   } finally { requestsLoading.value = false }
+}
+
+async function loadSentRequests() {
+  sentLoading.value = true
+  try {
+    const res = await usersApi.getSentRequests()
+    sentRequests.value = res.data
+    // Initialise sentIds so search results show "already sent" correctly
+    sentIds.value = new Set(res.data.map(r => r.receiver.telegram_id))
+  } finally { sentLoading.value = false }
 }
 
 async function loadFriends() {
@@ -193,7 +247,7 @@ async function loadFriends() {
 }
 
 onMounted(async () => {
-  await Promise.all([loadRequests(), loadFriends()])
+  await Promise.all([loadRequests(), loadSentRequests(), loadFriends()])
 })
 </script>
 
@@ -235,4 +289,9 @@ onMounted(async () => {
 .request-actions { display: flex; gap: 6px; }
 .section-title { font-size: 15px; font-weight: 700; margin-bottom: 10px; }
 .section-block { margin-bottom: 16px; }
+.tab-badge-gray {
+  background: var(--text-muted); color: white; border-radius: 10px;
+  padding: 1px 6px; font-size: 11px;
+}
+.sent-hint { font-size: 12px; color: var(--text-muted); margin-top: 2px; }
 </style>

@@ -1,11 +1,13 @@
 from fastapi import APIRouter, Depends, HTTPException, Header
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func, Integer, cast
+from sqlalchemy import select, func, Integer, cast, delete
 from app.database import get_db
 from app.models.user import User, FriendRequest, FriendRequestStatus
 from app.models.match_stats import PlayerMatchStat
 from app.schemas.user import UserOut, UserUpdate, UserShort, FriendRequestOut, FriendRequestCreate, UserStats
 from app.services.telegram_auth import verify_telegram_init_data
+from app.services.telegram_notify import notify_users
+from app.config import get_settings
 
 router = APIRouter(prefix="/users", tags=["users"])
 
@@ -179,6 +181,7 @@ async def send_friend_request(
     if receiver.id == current_user.id:
         raise HTTPException(400, "Cannot add yourself")
 
+    # Block if there's already a pending or accepted relation in either direction
     existing = await db.execute(
         select(FriendRequest).where(
             (
@@ -186,15 +189,24 @@ async def send_friend_request(
             ) | (
                 (FriendRequest.sender_id == receiver.id) & (FriendRequest.receiver_id == current_user.id)
             ),
-            FriendRequest.status == FriendRequestStatus.PENDING,
+            FriendRequest.status.in_([FriendRequestStatus.PENDING, FriendRequestStatus.ACCEPTED]),
         )
     )
     if existing.scalar_one_or_none():
-        raise HTTPException(400, "Friend request already exists")
+        raise HTTPException(400, "Friend request already exists or already friends")
 
     req = FriendRequest(sender_id=current_user.id, receiver_id=receiver.id)
     db.add(req)
     await db.flush()
+
+    sender_name = f"@{current_user.username}" if current_user.username else current_user.first_name
+    notify_text = (
+        f"👥 <b>{sender_name}</b> отправил(а) тебе запрос в друзья!\n\n"
+        f"Открой раздел «Друзья» чтобы принять или отклонить."
+    )
+    settings = get_settings()
+    await notify_users(settings.bot_token, [receiver.telegram_id], notify_text)
+
     return _build_friend_req_out(req, current_user, receiver)
 
 
@@ -212,10 +224,16 @@ async def accept_friend_request(
     await db.flush()
     sender = await db.get(User, req.sender_id)
     receiver = await db.get(User, req.receiver_id)
+
+    accepter_name = f"@{current_user.username}" if current_user.username else current_user.first_name
+    notify_text = f"✅ <b>{accepter_name}</b> принял(а) твой запрос в друзья!"
+    settings = get_settings()
+    await notify_users(settings.bot_token, [sender.telegram_id], notify_text)
+
     return _build_friend_req_out(req, sender, receiver)
 
 
-@router.post("/friends/requests/{request_id}/decline", response_model=FriendRequestOut)
+@router.post("/friends/requests/{request_id}/decline")
 async def decline_friend_request(
     request_id: int,
     current_user: User = Depends(get_current_user),
@@ -225,11 +243,43 @@ async def decline_friend_request(
     req = result.scalar_one_or_none()
     if not req or req.receiver_id != current_user.id:
         raise HTTPException(404, "Request not found")
-    req.status = FriendRequestStatus.DECLINED
+    await db.delete(req)
     await db.flush()
-    sender = await db.get(User, req.sender_id)
-    receiver = await db.get(User, req.receiver_id)
-    return _build_friend_req_out(req, sender, receiver)
+    return {"ok": True}
+
+
+@router.get("/friends/sent", response_model=list[FriendRequestOut])
+async def get_sent_requests(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(
+        select(FriendRequest).where(
+            FriendRequest.sender_id == current_user.id,
+            FriendRequest.status == FriendRequestStatus.PENDING,
+        )
+    )
+    out = []
+    for req in result.scalars().all():
+        receiver = await db.get(User, req.receiver_id)
+        if receiver:
+            out.append(_build_friend_req_out(req, current_user, receiver))
+    return out
+
+
+@router.delete("/friends/requests/{request_id}")
+async def cancel_friend_request(
+    request_id: int,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(select(FriendRequest).where(FriendRequest.id == request_id))
+    req = result.scalar_one_or_none()
+    if not req or req.sender_id != current_user.id or req.status != FriendRequestStatus.PENDING:
+        raise HTTPException(404, "Request not found")
+    await db.delete(req)
+    await db.flush()
+    return {"ok": True}
 
 
 @router.get("/{user_id}", response_model=UserOut)
