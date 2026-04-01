@@ -230,11 +230,21 @@ async def update_match(
     changed_lines = []
     for field, value in changes.items():
         old_val = getattr(match, field)
-        if old_val != value:
+
+        # For match_date compare at minute precision to avoid false positives
+        # from microseconds stored in the DB vs input without seconds.
+        if field == "match_date" and isinstance(old_val, datetime) and isinstance(value, datetime):
+            old_cmp = old_val.replace(second=0, microsecond=0)
+            new_cmp = value.replace(second=0, microsecond=0)
+            is_changed = old_cmp != new_cmp
+        else:
+            is_changed = old_val != value
+
+        if is_changed:
             label = field_labels.get(field, field)
             if field == "match_date":
-                old_str = old_val.strftime("%d.%m.%Y %H:%M") if hasattr(old_val, "strftime") else str(old_val)[:16]
-                new_str = value.strftime("%d.%m.%Y %H:%M") if hasattr(value, "strftime") else str(value)[:16]
+                old_str = old_val.strftime("%d.%m.%Y %H:%M")
+                new_str = value.strftime("%d.%m.%Y %H:%M")
                 changed_lines.append(f"• {label}: {old_str} → {new_str}")
             else:
                 changed_lines.append(f"• {label}: {old_val} → {value}")
