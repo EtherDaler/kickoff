@@ -38,9 +38,15 @@ async def show_match_detail(message: Message, api: APIClient, match_id: int):
         await message.answer("❌ Матч не найден или у вас нет доступа.")
         return
 
-    is_org = match["organizer"]["telegram_id"] == message.from_user.id
-    is_part = any(p["user"]["telegram_id"] == message.from_user.id for p in match.get("participants", []))
-    confirmed = sum(1 for p in match.get("participants", []) if p["status"] == "confirmed")
+    tg_id = message.from_user.id
+    is_org = match["organizer"]["telegram_id"] == tg_id
+    participants = match.get("participants", [])
+    is_part = any(p["user"]["telegram_id"] == tg_id for p in participants)
+    is_co_org = any(
+        p["user"]["telegram_id"] == tg_id and p.get("is_co_organizer")
+        for p in participants
+    )
+    confirmed = sum(1 for p in participants if p["status"] == "confirmed")
 
     text = (
         f"⚽ <b>{match['title']}</b> (#{match['id']})\n\n"
@@ -54,7 +60,6 @@ async def show_match_detail(message: Message, api: APIClient, match_id: int):
     if match.get("description"):
         text += f"\n📝 {match['description']}\n"
 
-    participants = match.get("participants", [])
     if participants:
         text += "\n<b>Участники:</b>\n"
         for p in participants[:15]:
@@ -62,7 +67,8 @@ async def show_match_detail(message: Message, api: APIClient, match_id: int):
             role_icon = "🟡" if p["role"] == "referee" else "⚽"
             status_icon = {"confirmed": "✅", "pending_payment": "⏳", "invited": "📨", "cancelled": "❌"}.get(p["status"], "❓")
             name = f"@{u['username']}" if u.get("username") else u["first_name"]
-            text += f"  {role_icon} {status_icon} {name}\n"
+            co_label = " 👑" if p.get("is_co_organizer") else ""
+            text += f"  {role_icon} {status_icon} {name}{co_label}\n"
 
     await message.answer(
         text,
@@ -71,6 +77,7 @@ async def show_match_detail(message: Message, api: APIClient, match_id: int):
             match_id, is_org, is_part,
             match.get("is_paid", False),
             status=match.get("status", "upcoming"),
+            is_co_organizer=is_co_org,
         ),
     )
 

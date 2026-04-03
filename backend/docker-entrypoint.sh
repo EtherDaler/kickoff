@@ -9,13 +9,20 @@ echo "✅ PostgreSQL is ready"
 
 mkdir -p /app/migrations/versions
 
-# Создаём начальную миграцию если её ещё нет
+# Создаём начальную миграцию если её ещё нет, иначе проверяем наличие новых изменений схемы
 if [ -z "$(find /app/migrations/versions -name '*.py' 2>/dev/null)" ]; then
   echo "📋 No migrations found — creating initial migration..."
   alembic revision --autogenerate -m "initial"
   echo "✅ Initial migration created"
 else
-  echo "📋 Existing migrations found"
+  echo "📋 Existing migrations found — checking for new schema changes..."
+  if ! alembic check 2>/dev/null; then
+    echo "🔄 New schema changes detected — generating migration..."
+    alembic revision --autogenerate -m "auto_$(date +%s)"
+    echo "✅ New migration created"
+  else
+    echo "✅ Schema is up to date"
+  fi
 fi
 
 # Применяем миграции
@@ -38,6 +45,7 @@ async def reset():
 asyncio.run(reset())
 "
     echo "🔄 Retrying migrations..."
+    alembic revision --autogenerate -m "recovery_$(date +%s)"
     alembic upgrade head
   else
     cat /tmp/alembic_err.txt

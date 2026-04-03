@@ -52,9 +52,11 @@ def match_actions(
     is_participant: bool,
     is_paid: bool,
     status: str = "upcoming",
+    is_co_organizer: bool = False,
 ) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     is_finished = status in ("finished", "cancelled")
+    can_edit = is_organizer or is_co_organizer
 
     if is_finished:
         builder.add(InlineKeyboardButton(text="🔁 Повторить матч", callback_data=f"repeat_match:{match_id}"))
@@ -66,8 +68,9 @@ def match_actions(
             if is_paid:
                 builder.add(InlineKeyboardButton(text="📸 Загрузить чек", callback_data=f"upload_receipt:{match_id}"))
             builder.add(InlineKeyboardButton(text="❌ Отменить участие", callback_data=f"leave_match:{match_id}"))
-        if is_organizer:
+        if can_edit:
             builder.add(InlineKeyboardButton(text="✏️ Редактировать матч", callback_data=f"edit_match:{match_id}"))
+        if is_organizer:
             builder.add(InlineKeyboardButton(text="📊 Добавить статистику", callback_data=f"add_stats:{match_id}"))
             builder.add(InlineKeyboardButton(text="🧾 Чеки игроков", callback_data=f"view_receipts:{match_id}"))
     builder.adjust(1)

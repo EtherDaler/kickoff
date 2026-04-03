@@ -73,4 +73,7 @@ export const matchesApi = {
     api.patch(`/matches/${matchId}/receipts/${receiptId}`, data),
   submitStats: (id, data) => api.post(`/matches/${id}/stats`, data),
   getStats: (id) => api.get(`/matches/${id}/stats`),
+  repeat: (id, data) => api.post(`/matches/${id}/repeat`, data),
+  grantCoOrganizer: (matchId, userId) => api.post(`/matches/${matchId}/co-organizer/${userId}`),
+  revokeCoOrganizer: (matchId, userId) => api.delete(`/matches/${matchId}/co-organizer/${userId}`),
 }

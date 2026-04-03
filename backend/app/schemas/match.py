@@ -65,6 +65,7 @@ class ParticipantOut(BaseModel):
     role: ParticipantRole
     status: ParticipantStatus
     payment_confirmed: bool
+    is_co_organizer: bool
     joined_at: datetime
 
     model_config = {"from_attributes": True}

@@ -52,6 +52,7 @@ def build_match_out(match: Match) -> MatchOut:
             role=p.role,
             status=p.status,
             payment_confirmed=p.payment_confirmed,
+            is_co_organizer=p.is_co_organizer,
             joined_at=p.joined_at,
         ))
     return MatchOut(
@@ -211,8 +212,13 @@ async def update_match(
     db: AsyncSession = Depends(get_db),
 ):
     match = await load_match(match_id, db)
-    if match.organizer_id != current_user.id:
-        raise HTTPException(403, "Only organizer can update")
+    is_organizer = match.organizer_id == current_user.id
+    is_co_org = any(
+        p.user_id == current_user.id and p.is_co_organizer
+        for p in match.participants
+    )
+    if not is_organizer and not is_co_org:
+        raise HTTPException(403, "Only organizer or co-organizer can update")
 
     field_labels = {
         "title": "Название",
@@ -260,6 +266,9 @@ async def update_match(
             if p.user_id != current_user.id
             and p.status not in (ParticipantStatus.CANCELLED, ParticipantStatus.REJECTED)
         ]
+        # If a co-organizer made the change, make sure the main organizer is also notified
+        if not is_organizer and match.organizer.telegram_id not in participant_tg_ids:
+            participant_tg_ids.append(match.organizer.telegram_id)
         if participant_tg_ids:
             changes_text = "\n".join(changed_lines)
             notify_text = (
@@ -285,18 +294,28 @@ async def join_match(
     if match.status != MatchStatus.UPCOMING:
         raise HTTPException(400, "Match is not open for joining")
 
+    # Private matches can only be joined by invited participants or via direct invite
+    if match.visibility == MatchVisibility.PRIVATE and match.organizer_id != current_user.id:
+        is_invited = any(p.user_id == current_user.id for p in match.participants)
+        if not is_invited:
+            raise HTTPException(403, "This match is private")
+
     existing = next((p for p in match.participants if p.user_id == current_user.id), None)
     if existing:
+        if existing.status == ParticipantStatus.CANCELLED:
+            raise HTTPException(400, "You have cancelled your participation in this match")
         raise HTTPException(400, "Already joined")
 
     role = ParticipantRole.REFEREE if as_referee else ParticipantRole.PLAYER
     if role == ParticipantRole.PLAYER:
-        confirmed_players = sum(
+        # Count both confirmed and pending_payment players — all hold a slot
+        taken_slots = sum(
             1 for p in match.participants
-            if p.role == ParticipantRole.PLAYER and p.status == ParticipantStatus.CONFIRMED
+            if p.role == ParticipantRole.PLAYER
+            and p.status in (ParticipantStatus.CONFIRMED, ParticipantStatus.PENDING_PAYMENT)
         )
-        if confirmed_players >= match.max_players:
-            raise HTTPException(400, "No slots available")
+        if taken_slots >= match.max_players:
+            raise HTTPException(400, "No slots available — the match is full")
 
     initial_status = ParticipantStatus.PENDING_PAYMENT if match.is_paid and role == ParticipantRole.PLAYER else ParticipantStatus.CONFIRMED
     participant = MatchParticipant(
@@ -352,6 +371,57 @@ async def leave_match(
         settings = get_settings()
         await notify_users(settings.bot_token, notify_tg_ids, notify_text)
 
+    return build_match_out(match)
+
+
+@router.post("/{match_id}/co-organizer/{user_id}", response_model=MatchOut)
+async def grant_co_organizer(
+    match_id: int,
+    user_id: int,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    match = await load_match(match_id, db)
+    if match.organizer_id != current_user.id:
+        raise HTTPException(403, "Only the main organizer can assign co-organizers")
+
+    participant = next(
+        (p for p in match.participants if p.user_id == user_id
+         and p.status not in (ParticipantStatus.CANCELLED, ParticipantStatus.REJECTED)),
+        None,
+    )
+    if not participant:
+        raise HTTPException(404, "User is not an active participant of this match")
+    if user_id == current_user.id:
+        raise HTTPException(400, "Organizer cannot assign themselves as co-organizer")
+
+    participant.is_co_organizer = True
+    await db.flush()
+    match = await load_match(match_id, db)
+    return build_match_out(match)
+
+
+@router.delete("/{match_id}/co-organizer/{user_id}", response_model=MatchOut)
+async def revoke_co_organizer(
+    match_id: int,
+    user_id: int,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    match = await load_match(match_id, db)
+    if match.organizer_id != current_user.id:
+        raise HTTPException(403, "Only the main organizer can manage co-organizers")
+
+    participant = next(
+        (p for p in match.participants if p.user_id == user_id),
+        None,
+    )
+    if not participant:
+        raise HTTPException(404, "Participant not found")
+
+    participant.is_co_organizer = False
+    await db.flush()
+    match = await load_match(match_id, db)
     return build_match_out(match)
 
 

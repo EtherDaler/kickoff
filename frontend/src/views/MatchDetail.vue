@@ -92,7 +92,7 @@
             </button>
           </template>
 
-          <template v-if="isOrganizer">
+          <template v-if="canEdit">
             <button
               v-if="match.status === 'upcoming'"
               class="btn btn-primary btn-full"
@@ -100,22 +100,24 @@
             >
               ✏️ Редактировать матч
             </button>
-            <button
-              v-if="match.status === 'finished'"
-              class="btn btn-secondary btn-full"
-              style="margin-top: 8px;"
-              @click="$router.push(`/matches/${match.id}/stats`)"
-            >
-              📊 Заполнить статистику
-            </button>
-            <button
-              v-else-if="match.status === 'upcoming'"
-              class="btn btn-outline btn-full"
-              style="margin-top: 8px;"
-              @click="$router.push(`/matches/${match.id}/stats`)"
-            >
-              📊 Управление матчем
-            </button>
+            <template v-if="isOrganizer">
+              <button
+                v-if="match.status === 'finished'"
+                class="btn btn-secondary btn-full"
+                style="margin-top: 8px;"
+                @click="$router.push(`/matches/${match.id}/stats`)"
+              >
+                📊 Заполнить статистику
+              </button>
+              <button
+                v-else-if="match.status === 'upcoming'"
+                class="btn btn-outline btn-full"
+                style="margin-top: 8px;"
+                @click="$router.push(`/matches/${match.id}/stats`)"
+              >
+                📊 Управление матчем
+              </button>
+            </template>
           </template>
         </div>
 
@@ -168,14 +170,26 @@
               <div class="participant-info">
                 <span class="participant-name">
                   {{ p.user.first_name }} {{ p.user.last_name || '' }}
+                  <span v-if="p.user.id === match.organizer.id" class="badge badge-orange" style="margin-left:4px;">Орг.</span>
+                  <span v-else-if="p.is_co_organizer" class="badge badge-orange" style="margin-left:4px;">Соорг.</span>
                   <span v-if="p.role === 'referee'" class="badge badge-yellow" style="margin-left:4px;">Судья</span>
                 </span>
                 <span v-if="p.user.username" class="participant-username">@{{ p.user.username }}</span>
               </div>
-              <div class="participant-status">
+              <div class="participant-status" style="display:flex;align-items:center;gap:6px;">
                 <span :class="['badge', participantStatusBadge(p.status)]">
                   {{ participantStatusLabel(p.status) }}
                 </span>
+                <!-- Co-organizer toggle: only main organizer, only non-organizer active participants -->
+                <button
+                  v-if="isOrganizer && p.user.id !== match.organizer.id && !['cancelled','rejected'].includes(p.status)"
+                  class="btn-icon"
+                  :title="p.is_co_organizer ? 'Снять соорганизатора' : 'Назначить соорганизатором'"
+                  :disabled="coOrgLoading"
+                  @click="toggleCoOrganizer(p)"
+                >
+                  {{ p.is_co_organizer ? '👑✕' : '👑' }}
+                </button>
               </div>
             </div>
           </div>
@@ -231,9 +245,14 @@ const uploadLoading = ref(false)
 const receipts = ref([])
 const showReceipts = ref(false)
 const receiptsLoading = ref(false)
+const coOrgLoading = ref(false)
 
 const me = computed(() => authStore.user)
 const isOrganizer = computed(() => me.value && match.value?.organizer?.id === me.value.id)
+const isCoOrganizer = computed(() =>
+  match.value?.participants?.some(p => p.user.id === me.value?.id && p.is_co_organizer)
+)
+const canEdit = computed(() => isOrganizer.value || isCoOrganizer.value)
 const isParticipant = computed(() => match.value?.participants?.some(p => p.user.id === me.value?.id))
 const myParticipation = computed(() => match.value?.participants?.find(p => p.user.id === me.value?.id))
 const confirmedCount = computed(() => match.value?.participants?.filter(p => p.status === 'confirmed').length || 0)
@@ -341,6 +360,17 @@ function formatDate(dt) {
   })
 }
 
+async function toggleCoOrganizer(p) {
+  coOrgLoading.value = true
+  actionError.value = ''
+  try {
+    const fn = p.is_co_organizer ? matchesApi.revokeCoOrganizer : matchesApi.grantCoOrganizer
+    const res = await fn(match.value.id, p.user.id)
+    match.value = res.data
+  } catch (e) { actionError.value = e.message }
+  finally { coOrgLoading.value = false }
+}
+
 const participantStatusLabel = (s) => ({ confirmed: 'Подтверждён', pending_payment: 'Ожидает оплаты', invited: 'Приглашён', cancelled: 'Отменён', rejected: 'Отклонён' }[s] || s)
 const participantStatusBadge = (s) => ({ confirmed: 'badge-green', pending_payment: 'badge-yellow', invited: 'badge-blue', cancelled: 'badge-gray', rejected: 'badge-red' }[s] || 'badge-gray')
 const receiptStatusLabel = (s) => ({ uploaded: 'Загружен', approved: 'Принят', rejected: 'Отклонён', refunded: 'Возврат' }[s] || s)
@@ -419,4 +449,16 @@ onMounted(loadMatch)
 .receipt-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; font-weight: 600; }
 .receipt-link { color: var(--info); font-size: 14px; display: block; margin-bottom: 8px; }
 .receipt-actions { display: flex; gap: 8px; }
+
+.badge-orange { background: rgba(251, 146, 60, 0.15); color: #f97316; }
+
+.btn-icon {
+  background: none; border: 1px solid var(--border);
+  border-radius: 8px; padding: 2px 6px; cursor: pointer;
+  font-size: 12px; color: var(--text-secondary);
+  transition: background 0.15s;
+  flex-shrink: 0;
+}
+.btn-icon:hover:not(:disabled) { background: var(--bg-secondary); }
+.btn-icon:disabled { opacity: 0.4; cursor: not-allowed; }
 </style>

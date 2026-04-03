@@ -31,6 +31,7 @@ class MatchParticipant(Base):
         Enum(ParticipantStatus), default=ParticipantStatus.PENDING_PAYMENT, nullable=False
     )
     payment_confirmed: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    is_co_organizer: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     joined_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
     match: Mapped["Match"] = relationship("Match", back_populates="participants")  # type: ignore[name-defined]
