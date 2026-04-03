@@ -512,6 +512,50 @@ async def accept_invite(
     return build_match_out(match)
 
 
+@router.post("/{match_id}/kick/{user_id}", response_model=MatchOut)
+async def kick_participant(
+    match_id: int,
+    user_id: int,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    match = await load_match(match_id, db)
+    is_organizer = match.organizer_id == current_user.id
+    is_co_org = any(
+        p.user_id == current_user.id and p.is_co_organizer
+        for p in match.participants
+    )
+    if not is_organizer and not is_co_org:
+        raise HTTPException(403, "Only organizer or co-organizer can kick participants")
+    if user_id == match.organizer_id:
+        raise HTTPException(400, "Cannot kick the organizer")
+
+    participant = next(
+        (p for p in match.participants if p.user_id == user_id),
+        None,
+    )
+    if not participant:
+        raise HTTPException(404, "Participant not found")
+    if participant.status in (ParticipantStatus.CANCELLED, ParticipantStatus.REJECTED):
+        raise HTTPException(400, "Participant is already removed")
+
+    participant.status = ParticipantStatus.REJECTED
+    await db.flush()
+    match = await load_match(match_id, db)
+
+    kicked_user = await db.get(User, user_id)
+    if kicked_user and kicked_user.telegram_id:
+        settings = get_settings()
+        notify_text = (
+            f"🚫 Вы были исключены из матча «{match.title}»\n\n"
+            f"📍 {match.address}\n"
+            f"📅 {match.match_date.strftime('%d.%m.%Y %H:%M')}"
+        )
+        await notify_users(settings.bot_token, [kicked_user.telegram_id], notify_text)
+
+    return build_match_out(match)
+
+
 @router.post("/{match_id}/upload-receipt", response_model=PaymentReceiptOut)
 async def upload_receipt(
     match_id: int,
@@ -547,6 +591,18 @@ async def upload_receipt(
         db.add(receipt)
     await db.flush()
     await db.refresh(receipt)
+
+    uploader_name = f"@{current_user.username}" if current_user.username else current_user.first_name
+    organizer = await db.get(User, match.organizer_id)
+    if organizer and organizer.telegram_id:
+        settings = get_settings()
+        notify_text = (
+            f"🧾 <b>{uploader_name}</b> прикрепил(а) квитанцию об оплате\n\n"
+            f"⚽ Матч: «{match.title}»\n"
+            f"📅 {match.match_date.strftime('%d.%m.%Y %H:%M')}\n\n"
+            f"Проверьте чек в разделе матча."
+        )
+        await notify_users(settings.bot_token, [organizer.telegram_id], notify_text)
 
     user_short = UserShort.model_validate(current_user)
     user_short.roles = current_user.get_roles()
@@ -629,6 +685,29 @@ async def review_receipt(
 
     await db.flush()
     user = await db.get(User, receipt.user_id)
+
+    if user and user.telegram_id:
+        settings = get_settings()
+        if data.status == PaymentStatus.APPROVED:
+            notify_text = (
+                f"✅ Ваша оплата подтверждена!\n\n"
+                f"⚽ Матч: «{match.title}»\n"
+                f"📍 {match.address}\n"
+                f"📅 {match.match_date.strftime('%d.%m.%Y %H:%M')}\n\n"
+                f"Вы допущены к матчу. До встречи на поле!"
+            )
+        else:
+            note_line = f"\n💬 Причина: {data.organizer_note}" if data.organizer_note else ""
+            notify_text = (
+                f"❌ Ваша квитанция об оплате отклонена\n\n"
+                f"⚽ Матч: «{match.title}»\n"
+                f"📍 {match.address}\n"
+                f"📅 {match.match_date.strftime('%d.%m.%Y %H:%M')}"
+                f"{note_line}\n\n"
+                f"Пожалуйста, загрузите корректный чек."
+            )
+        await notify_users(settings.bot_token, [user.telegram_id], notify_text)
+
     user_short = UserShort.model_validate(user)
     user_short.roles = user.get_roles() if user else []
     return PaymentReceiptOut(

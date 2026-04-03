@@ -76,4 +76,5 @@ export const matchesApi = {
   repeat: (id, data) => api.post(`/matches/${id}/repeat`, data),
   grantCoOrganizer: (matchId, userId) => api.post(`/matches/${matchId}/co-organizer/${userId}`),
   revokeCoOrganizer: (matchId, userId) => api.delete(`/matches/${matchId}/co-organizer/${userId}`),
+  kickParticipant: (matchId, userId) => api.post(`/matches/${matchId}/kick/${userId}`),
 }

@@ -124,36 +124,39 @@
         <!-- Alert -->
         <div v-if="actionError" class="alert alert-error" style="margin-top: 8px;">{{ actionError }}</div>
 
+        <!-- Receipts block (organizer/co-org only, paid matches) -->
+        <div v-if="canEdit && match.is_paid" style="margin-top: 16px;">
+          <h3 class="section-title">🧾 Квитанции об оплате</h3>
+          <div v-if="receiptsLoading" class="loading-center"><div class="spinner"></div></div>
+          <div v-else-if="!receipts.length" class="empty-hint">Квитанции ещё не загружены</div>
+          <div v-else class="receipts-list">
+            <div v-for="r in receipts" :key="r.id" class="receipt-item card">
+              <div class="card-body">
+                <div class="receipt-header">
+                  <span class="receipt-name">{{ r.user.first_name }} {{ r.user.last_name || '' }}</span>
+                  <span :class="['badge', receiptStatusBadge(r.status)]">{{ receiptStatusLabel(r.status) }}</span>
+                </div>
+                <a :href="r.receipt_url" target="_blank" class="receipt-link">📎 Открыть квитанцию</a>
+                <div v-if="r.status === 'uploaded'" class="receipt-actions">
+                  <button class="btn btn-primary btn-sm" :disabled="receiptsLoading" @click="reviewReceipt(r.id, 'approved')">
+                    ✅ Допустить
+                  </button>
+                  <button class="btn btn-danger btn-sm" :disabled="receiptsLoading" @click="reviewReceipt(r.id, 'rejected')">
+                    ❌ Отклонить
+                  </button>
+                </div>
+                <div v-else-if="r.status === 'approved'" class="receipt-ok-hint">Участник допущен к матчу</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
         <!-- Participants -->
         <div style="margin-top: 16px;">
           <h3 class="section-title">
             Участники
             <span class="badge badge-blue" style="margin-left: 6px;">{{ confirmedCount }}/{{ match.max_players }}</span>
           </h3>
-
-          <!-- Receipts (organizer only) -->
-          <div v-if="isOrganizer && match.is_paid" style="margin-bottom: 12px;">
-            <button class="btn btn-secondary btn-sm" @click="toggleReceipts">
-              🧾 {{ showReceipts ? 'Скрыть чеки' : 'Просмотреть чеки' }}
-            </button>
-            <div v-if="showReceipts" class="receipts-list">
-              <div v-if="receiptsLoading" class="loading-center"><div class="spinner"></div></div>
-              <div v-else-if="!receipts.length" class="empty-state"><p>Чеки не загружены</p></div>
-              <div v-else v-for="r in receipts" :key="r.id" class="receipt-item card">
-                <div class="card-body">
-                  <div class="receipt-header">
-                    <span>{{ r.user.first_name }} {{ r.user.last_name || '' }}</span>
-                    <span :class="['badge', receiptStatusBadge(r.status)]">{{ receiptStatusLabel(r.status) }}</span>
-                  </div>
-                  <a :href="r.receipt_url" target="_blank" class="receipt-link">📎 Просмотреть чек</a>
-                  <div v-if="r.status === 'uploaded'" class="receipt-actions">
-                    <button class="btn btn-primary btn-sm" @click="reviewReceipt(r.id, 'approved')">✅ Принять</button>
-                    <button class="btn btn-danger btn-sm" @click="reviewReceipt(r.id, 'rejected')">❌ Отклонить</button>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
 
           <div class="participants-list">
             <div
@@ -176,20 +179,29 @@
                 </span>
                 <span v-if="p.user.username" class="participant-username">@{{ p.user.username }}</span>
               </div>
-              <div class="participant-status" style="display:flex;align-items:center;gap:6px;">
+              <div class="participant-status" style="display:flex;align-items:center;gap:6px;flex-shrink:0;">
                 <span :class="['badge', participantStatusBadge(p.status)]">
                   {{ participantStatusLabel(p.status) }}
                 </span>
-                <!-- Co-organizer toggle: only main organizer, only non-organizer active participants -->
-                <button
-                  v-if="isOrganizer && p.user.id !== match.organizer.id && !['cancelled','rejected'].includes(p.status)"
-                  class="btn-icon"
-                  :title="p.is_co_organizer ? 'Снять соорганизатора' : 'Назначить соорганизатором'"
-                  :disabled="coOrgLoading"
-                  @click="toggleCoOrganizer(p)"
-                >
-                  {{ p.is_co_organizer ? '👑✕' : '👑' }}
-                </button>
+                <!-- Controls visible only to organizer for non-organizer participants -->
+                <template v-if="canEdit && p.user.id !== match.organizer.id">
+                  <!-- Co-organizer toggle (main organizer only) -->
+                  <button
+                    v-if="isOrganizer && !['cancelled','rejected'].includes(p.status)"
+                    class="btn-icon"
+                    :title="p.is_co_organizer ? 'Снять соорганизатора' : 'Назначить соорганизатором'"
+                    :disabled="coOrgLoading"
+                    @click="toggleCoOrganizer(p)"
+                  >{{ p.is_co_organizer ? '👑✕' : '👑' }}</button>
+                  <!-- Kick button -->
+                  <button
+                    v-if="!['cancelled','rejected'].includes(p.status)"
+                    class="btn-icon btn-icon--danger"
+                    title="Исключить участника"
+                    :disabled="kickLoading"
+                    @click="kickParticipant(p)"
+                  >✕</button>
+                </template>
               </div>
             </div>
           </div>
@@ -243,9 +255,9 @@ const actionLoading = ref(false)
 const actionError = ref('')
 const uploadLoading = ref(false)
 const receipts = ref([])
-const showReceipts = ref(false)
 const receiptsLoading = ref(false)
 const coOrgLoading = ref(false)
+const kickLoading = ref(false)
 
 const me = computed(() => authStore.user)
 const isOrganizer = computed(() => me.value && match.value?.organizer?.id === me.value.id)
@@ -276,6 +288,18 @@ async function loadMatch() {
       const sr = await matchesApi.getStats(route.params.id)
       stats.value = sr.data
     } catch { stats.value = null }
+    // Auto-load receipts for organizer/co-org on paid matches
+    if (res.data.is_paid) {
+      const myId = authStore.user?.id
+      const amOrg = res.data.organizer?.id === myId
+      const amCoOrg = res.data.participants?.some(p => p.user.id === myId && p.is_co_organizer)
+      if (amOrg || amCoOrg) {
+        try {
+          const rr = await matchesApi.getReceipts(route.params.id)
+          receipts.value = rr.data
+        } catch { receipts.value = [] }
+      }
+    }
   } catch (e) {
     error.value = e.message
   } finally {
@@ -333,24 +357,26 @@ async function uploadReceipt(event) {
   finally { uploadLoading.value = false }
 }
 
-async function toggleReceipts() {
-  showReceipts.value = !showReceipts.value
-  if (showReceipts.value && !receipts.value.length) {
-    receiptsLoading.value = true
-    try {
-      const res = await matchesApi.getReceipts(route.params.id)
-      receipts.value = res.data
-    } finally { receiptsLoading.value = false }
-  }
-}
-
 async function reviewReceipt(receiptId, status) {
+  receiptsLoading.value = true
   try {
     await matchesApi.reviewReceipt(route.params.id, receiptId, { status })
     const res = await matchesApi.getReceipts(route.params.id)
     receipts.value = res.data
     await loadMatch()
   } catch (e) { actionError.value = e.message }
+  finally { receiptsLoading.value = false }
+}
+
+async function kickParticipant(p) {
+  if (!confirm(`Исключить ${p.user.first_name} из матча?`)) return
+  kickLoading.value = true
+  actionError.value = ''
+  try {
+    const res = await matchesApi.kickParticipant(match.value.id, p.user.id)
+    match.value = res.data
+  } catch (e) { actionError.value = e.message }
+  finally { kickLoading.value = false }
 }
 
 function formatDate(dt) {
@@ -454,11 +480,18 @@ onMounted(loadMatch)
 
 .btn-icon {
   background: none; border: 1px solid var(--border);
-  border-radius: 8px; padding: 2px 6px; cursor: pointer;
+  border-radius: 8px; padding: 2px 7px; cursor: pointer;
   font-size: 12px; color: var(--text-secondary);
   transition: background 0.15s;
   flex-shrink: 0;
+  line-height: 1.6;
 }
 .btn-icon:hover:not(:disabled) { background: var(--bg-secondary); }
 .btn-icon:disabled { opacity: 0.4; cursor: not-allowed; }
+.btn-icon--danger { border-color: rgba(248,113,113,0.4); color: var(--danger); }
+.btn-icon--danger:hover:not(:disabled) { background: rgba(248,113,113,0.1); }
+
+.empty-hint { font-size: 13px; color: var(--text-muted); text-align: center; padding: 12px 0; }
+.receipt-name { font-weight: 600; font-size: 14px; }
+.receipt-ok-hint { font-size: 12px; color: var(--accent); margin-top: 4px; }
 </style>
