@@ -9,7 +9,7 @@ echo "✅ PostgreSQL is ready"
 
 mkdir -p /app/migrations/versions
 
-# Step 1: If no migration files exist at all — create the initial one
+# Step 1: Если миграций нет вообще — создаём начальную
 if [ -z "$(find /app/migrations/versions -name '*.py' 2>/dev/null)" ]; then
   echo "📋 No migrations found — creating initial migration..."
   alembic revision --autogenerate -m "initial"
@@ -18,12 +18,14 @@ else
   echo "📋 Existing migrations found"
 fi
 
-# Step 2: Apply all existing pending migrations
+# Step 2: Применяем все ожидающие миграции
 echo "⬆️  Applying migrations..."
 if ! alembic upgrade head 2>/tmp/alembic_err.txt; then
+  cat /tmp/alembic_err.txt
+
   if grep -q "Can't locate revision" /tmp/alembic_err.txt; then
-    # Stale revision in DB — reset alembic_version and retry
-    echo "⚠️  Stale revision detected — resetting alembic_version..."
+    # В БД застрял revision которого нет в файлах — сбрасываем alembic_version
+    echo "⚠️  Stale revision — resetting alembic_version..."
     python3 -c "
 import asyncio, os
 from sqlalchemy.ext.asyncio import create_async_engine
@@ -40,19 +42,29 @@ asyncio.run(reset())
     echo "🔄 Retrying after stale revision reset..."
     alembic revision --autogenerate -m "recovery_$(date +%s)"
     alembic upgrade head
+
   elif grep -qE "NotNullViolationError|contains null values|not-null constraint|violates not-null" /tmp/alembic_err.txt; then
-    # Bad auto-migration missing server_default — delete it and regenerate
-    echo "⚠️  NOT NULL migration error — removing bad auto-migration and regenerating..."
-    find /app/migrations/versions -name "auto_*.py" -delete
+    # Плохая автомиграция без DEFAULT — удаляем ВСЕ файлы кроме initial
+    # Alembic называет файлы {rev_id}_{message}.py, поэтому ищем по суффиксу
+    echo "⚠️  NOT NULL migration error — removing bad migrations..."
+    find /app/migrations/versions -name "*.py" ! -name "*_initial.py" -delete
+    echo "Remaining migration files:"
+    ls /app/migrations/versions/
+    # Синхронизируем alembic_version с текущей цепочкой (только initial)
+    echo "🔖 Stamping DB to head of remaining migration chain..."
+    alembic stamp head
+    # Генерируем заново — теперь модель содержит server_default, ошибки не будет
+    echo "🔄 Regenerating migration with correct schema..."
     alembic revision --autogenerate -m "auto_$(date +%s)"
     alembic upgrade head
+
   else
-    cat /tmp/alembic_err.txt
+    echo "❌ Unknown migration error — see above"
     exit 1
   fi
 fi
 
-# Step 3: Only after DB is at head — check for new model changes not yet in a migration
+# Step 3: После того как БД на head — проверяем новые изменения модели
 echo "🔍 Checking for new model changes..."
 if ! alembic check 2>/dev/null; then
   echo "🔄 New schema changes detected — generating migration..."
