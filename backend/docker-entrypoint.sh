@@ -28,8 +28,8 @@ fi
 # Применяем миграции
 echo "⬆️  Applying migrations..."
 if ! alembic upgrade head 2>/tmp/alembic_err.txt; then
-  # Если в БД застрял старый revision — сбрасываем и мигрируем заново
   if grep -q "Can't locate revision" /tmp/alembic_err.txt; then
+    # Застрял старый revision в БД — сбрасываем и мигрируем заново
     echo "⚠️  Stale revision detected — resetting alembic_version..."
     python3 -c "
 import asyncio, os
@@ -44,8 +44,14 @@ async def reset():
 
 asyncio.run(reset())
 "
-    echo "🔄 Retrying migrations..."
+    echo "🔄 Retrying after stale revision reset..."
     alembic revision --autogenerate -m "recovery_$(date +%s)"
+    alembic upgrade head
+  elif grep -qE "NotNullViolationError|contains null values|not-null constraint|violates not-null" /tmp/alembic_err.txt; then
+    # Сломанная auto-миграция без server_default — удаляем и пересоздаём
+    echo "⚠️  NOT NULL migration error — removing bad auto-migration and regenerating..."
+    find /app/migrations/versions -name "auto_*.py" -delete
+    alembic revision --autogenerate -m "auto_$(date +%s)"
     alembic upgrade head
   else
     cat /tmp/alembic_err.txt
