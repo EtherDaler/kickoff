@@ -6,6 +6,7 @@ class BotSettings(BaseSettings):
     bot_token: str
     backend_url: str = "http://backend:8000"
     mini_app_url: str = ""
+    proxy_urls: str = ""  # comma-separated socks5://user:pass@host:port entries
 
     class Config:
         env_file = ".env"

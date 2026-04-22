@@ -17,9 +17,10 @@ logger = logging.getLogger(__name__)
 async def main():
     settings = get_settings()
 
+    proxy_session = create_proxy_session()
     bot = Bot(
         token=settings.bot_token,
-        session=create_proxy_session(),
+        **({"session": proxy_session} if proxy_session else {}),
         default=DefaultBotProperties(parse_mode=ParseMode.HTML),
     )
     storage = MemoryStorage()

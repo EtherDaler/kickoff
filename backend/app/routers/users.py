@@ -19,7 +19,9 @@ async def get_current_user(
 ) -> User:
     telegram_id: int | None = None
 
-    if x_bot_auth and x_bot_auth.isdigit():
+    settings = get_settings()
+    if x_bot_auth and x_bot_auth.isdigit() and settings.dev_mode:
+        # X-Bot-Auth is only accepted when DEV_MODE=true — never in production
         telegram_id = int(x_bot_auth)
     elif x_init_data:
         tg_data = verify_telegram_init_data(x_init_data)

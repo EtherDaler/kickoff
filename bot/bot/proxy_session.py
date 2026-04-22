@@ -1,6 +1,7 @@
 """
 Resilient SOCKS5 proxy session for aiogram.
 
+Proxy URLs are loaded from the PROXY_URLS env variable (comma-separated).
 On every TelegramNetworkError automatically rotates to the next proxy.
 Proxies are tried in random order at startup, so load is spread evenly.
 """
@@ -18,12 +19,6 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# SOCKS5 proxies in format: socks5://user:password@host:port
-_PROXY_URLS: list[str] = [
-    "socks5://proxy_user:JrMwCNHfKxF3HpeQ@134.122.120.67:30130",
-    "socks5://proxy_user:3NsIvOTPeyJSnmcL@185.237.165.81:43101",
-]
-
 
 class ResilientProxySession(AiohttpSession):
     """
@@ -36,14 +31,16 @@ class ResilientProxySession(AiohttpSession):
             raise ValueError("At least one proxy URL is required")
 
         self._proxy_urls = list(proxy_urls)
-        random.shuffle(self._proxy_urls)  # Random starting proxy on each restart
+        random.shuffle(self._proxy_urls)
         self._current_idx = 0
 
         super().__init__(proxy=self._proxy_urls[0], **kwargs)
         logger.info("Proxy session initialised with: %s", self._active_host())
 
     def _active_host(self) -> str:
-        return str(self._proxy_urls[self._current_idx]).split("@")[-1]
+        # Log only host:port, never credentials
+        url = str(self._proxy_urls[self._current_idx])
+        return url.split("@")[-1] if "@" in url else url
 
     async def _rotate_proxy(self) -> None:
         """Close current aiohttp session and switch to the next proxy URL."""
@@ -53,7 +50,6 @@ class ResilientProxySession(AiohttpSession):
         except Exception:
             pass
 
-        # Reset session and connector so create_session() rebuilds them
         self._session = None  # type: ignore[assignment]
         self._connector = None  # type: ignore[assignment]
 
@@ -89,5 +85,17 @@ class ResilientProxySession(AiohttpSession):
         raise last_exc  # type: ignore[misc]
 
 
-def create_proxy_session() -> ResilientProxySession:
-    return ResilientProxySession(proxy_urls=_PROXY_URLS)
+def create_proxy_session() -> ResilientProxySession | None:
+    """
+    Build a ResilientProxySession from the PROXY_URLS env variable.
+    Returns None if no proxies are configured (direct connection).
+    """
+    from bot.config import get_settings
+    raw = get_settings().proxy_urls.strip()
+    if not raw:
+        logger.info("No PROXY_URLS configured — using direct connection")
+        return None
+    urls = [u.strip() for u in raw.split(",") if u.strip()]
+    if not urls:
+        return None
+    return ResilientProxySession(proxy_urls=urls)
